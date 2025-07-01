@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bate-papo em Tempo Real</title>
+    <!-- Tailwind CSS para estilização rápida e moderna -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Biblioteca para formatar datas -->
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+    <style>
+        /* Estilo para a barra de rolagem */
+        #chat-messages::-webkit-scrollbar {
+            width: 8px;
+        }
+        #chat-messages::-webkit-scrollbar-track {
+            background: #2d3748; /* bg-gray-800 */
+        }
+        #chat-messages::-webkit-scrollbar-thumb {
+            background: #4a5568; /* bg-gray-600 */
+            border-radius: 4px;
+        }
+        #chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #718096; /* bg-gray-500 */
+        }
+        /* Transições suaves para uma melhor experiência */
+        .transition-all {
+            transition: all 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans flex items-center justify-center min-h-screen">
+
+    <div id="app-container" class="w-full max-w-4xl h-[90vh] mx-auto bg-gray-800 shadow-2xl rounded-xl flex flex-col p-4 md:p-6">
+
+        <!-- Tela de Login -->
+        <div id="login-screen" class="flex flex-col items-center justify-center h-full">
+            <div class="w-full max-w-sm text-center">
+                <h1 class="text-4xl font-bold text-cyan-400 mb-2">Bem-vindo ao Chat!</h1>
+                <p class="text-gray-400 mb-8">Escolha um apelido para começar a conversar.</p>
+                <div class="flex flex-col gap-4">
+                    <input type="text" id="nickname-input" placeholder="Digite seu apelido..." class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all" maxlength="20">
+                    <button id="join-button" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-transform transform hover:scale-105">
+                        Entrar no Bate-papo
+                    </button>
+                </div>
+                 <p id="user-id-display" class="text-xs text-gray-500 mt-8 break-all"></p>
+            </div>
+        </div>
+
+        <!-- Tela de Chat -->
+        <div id="chat-screen" class="hidden flex-1 flex flex-col h-full overflow-hidden">
+            <header class="border-b-2 border-gray-700 pb-4 mb-4">
+                <h2 class="text-2xl font-bold text-cyan-400 text-center">Sala de Bate-papo Pública</h2>
+                <p class="text-sm text-center text-gray-400">Conectado como: <strong id="nickname-display" class="text-cyan-300"></strong></p>
+            </header>
+
+            <!-- Área de Mensagens -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto pr-2 space-y-4">
+                <!-- As mensagens serão inseridas aqui -->
+            </div>
+
+            <!-- Área de Digitação -->
+            <div class="mt-4 pt-4 border-t-2 border-gray-700">
+                <div class="flex items-center space-x-3">
+                    <input type="text" id="message-input" placeholder="Digite sua mensagem..." class="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                    <button id="send-button" class="bg-cyan-600 hover:bg-cyan-700 text-white font-bold p-3 rounded-full shadow-lg transition-transform transform hover:scale-110">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-send"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Módulo JavaScript com a lógica do Firebase -->
+    <script type="module">
+        // Importações do Firebase SDK
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- CONFIGURAÇÃO E INICIALIZAÇÃO DO FIREBASE ---
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- ELEMENTOS DA UI ---
+        const loginScreen = document.getElementById('login-screen');
+        const chatScreen = document.getElementById('chat-screen');
+        const nicknameInput = document.getElementById('nickname-input');
+        const joinButton = document.getElementById('join-button');
+        const nicknameDisplay = document.getElementById('nickname-display');
+        const chatMessages = document.getElementById('chat-messages');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const userIdDisplay = document.getElementById('user-id-display');
+
+        let userNickname = '';
+        let currentUserId = null;
+        const messagesCollectionPath = `artifacts/${appId}/public/data/messages`;
+
+        // --- FUNÇÕES PRINCIPAIS ---
+
+        /**
+         * Realiza a autenticação anônima do usuário no Firebase.
+         */
+        async function authenticateUser() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                auth.onAuthStateChanged(user => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        userIdDisplay.textContent = `Seu ID de sessão: ${currentUserId}`;
+                        console.log("Usuário autenticado com UID:", currentUserId);
+                        listenForMessages();
+                    } else {
+                        console.error("Autenticação falhou.");
+                    }
+                });
+            } catch (error) {
+                console.error("Erro na autenticação:", error);
+                userIdDisplay.textContent = "Erro ao conectar. Tente recarregar a página.";
+            }
+        }
+
+        /**
+         * Adiciona uma nova mensagem ao Firestore.
+         */
+        async function sendMessage() {
+            const text = messageInput.value.trim();
+            if (text === '' || !userNickname || !currentUserId) {
+                return;
+            }
+
+            try {
+                await addDoc(collection(db, messagesCollectionPath), {
+                    nickname: userNickname,
+                    text: text,
+                    userId: currentUserId,
+                    timestamp: serverTimestamp()
+                });
+                messageInput.value = ''; // Limpa o campo de input
+            } catch (error) {
+                console.error("Erro ao enviar mensagem: ", error);
+            }
+        }
+
+        /**
+         * Ouve por novas mensagens em tempo real e atualiza a UI.
+         */
+        function listenForMessages() {
+            const q = query(collection(db, messagesCollectionPath), orderBy("timestamp", "asc"));
+
+            onSnapshot(q, (querySnapshot) => {
+                // Limpa as mensagens antigas para evitar duplicação
+                chatMessages.innerHTML = '';
+                querySnapshot.forEach((doc) => {
+                    displayMessage(doc.data());
+                });
+                // Rola para a mensagem mais recente
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }, (error) => {
+                console.error("Erro ao receber mensagens:", error);
+            });
+        }
+        
+        /**
+         * Cria e exibe um balão de mensagem na tela.
+         * @param {object} msg - O objeto da mensagem vindo do Firestore.
+         */
+        function displayMessage(msg) {
+            if (!msg.text || !msg.nickname) return; // Não exibe mensagens malformadas
+
+            const messageWrapper = document.createElement('div');
+            const messageElement = document.createElement('div');
+            
+            const isMyMessage = msg.userId === currentUserId;
+
+            // Define o alinhamento e as cores com base no autor da mensagem
+            messageWrapper.className = `flex ${isMyMessage ? 'justify-end' : 'justify-start'}`;
+            messageElement.className = `max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-xl ${isMyMessage ? 'bg-cyan-700 rounded-br-none' : 'bg-gray-600 rounded-bl-none'}`;
+            
+            const nickElement = document.createElement('p');
+            nickElement.className = `font-bold text-sm ${isMyMessage ? 'text-cyan-200' : 'text-gray-300'}`;
+            nickElement.textContent = msg.nickname;
+
+            const textElement = document.createElement('p');
+            textElement.className = 'text-white';
+            textElement.textContent = msg.text;
+
+            const timeElement = document.createElement('p');
+            timeElement.className = 'text-xs text-gray-400 text-right mt-1';
+            // Formata o timestamp se ele existir
+            timeElement.textContent = msg.timestamp ? dayjs(msg.timestamp.toDate()).format('HH:mm') : '';
+
+            messageElement.appendChild(nickElement);
+            messageElement.appendChild(textElement);
+            messageElement.appendChild(timeElement);
+            messageWrapper.appendChild(messageElement);
+
+            chatMessages.appendChild(messageWrapper);
+        }
+        
+        /**
+         * Inicia a sessão de chat, trocando da tela de login para a de chat.
+         */
+        function joinChat() {
+            const nick = nicknameInput.value.trim();
+            if (nick) {
+                userNickname = nick;
+                nicknameDisplay.textContent = userNickname;
+                
+                loginScreen.classList.add('hidden');
+                chatScreen.classList.remove('hidden');
+                messageInput.focus();
+            } else {
+                // Animação de erro para o input
+                nicknameInput.classList.add('border-red-500', 'animate-pulse');
+                setTimeout(() => {
+                    nicknameInput.classList.remove('border-red-500', 'animate-pulse');
+                }, 1000);
+            }
+        }
+
+        // --- EVENT LISTENERS ---
+        joinButton.addEventListener('click', joinChat);
+        nicknameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                joinChat();
+            }
+        });
+
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            // Permite enviar com Enter, mas criar nova linha com Shift+Enter
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault(); // Previne a quebra de linha
+                sendMessage();
+            }
+        });
+
+        // --- INICIALIZAÇÃO DA APLICAÇÃO ---
+        authenticateUser();
+
+    </script>
+</body>
+</html>
+
+
