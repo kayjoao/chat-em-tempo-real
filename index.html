@@ -1,218 +1,442 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bate-papo em Tempo Real (Depuração)</title>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Day.js para formatar datas -->
-    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
-    <style>
-        /* Estilos personalizados */
-        #chat-messages::-webkit-scrollbar, #user-list::-webkit-scrollbar { width: 8px; }
-        #chat-messages::-webkit-scrollbar-track, #user-list::-webkit-scrollbar-track { background: #1a202c; }
-        #chat-messages::-webkit-scrollbar-thumb, #user-list::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; }
-        .transition-all { transition: all 0.3s ease-in-out; }
-        .private-chat-trigger { cursor: pointer; text-decoration: underline; font-weight: bold; }
-        .private-chat-trigger:hover { color: #2dd4bf; }
-    </style>
-</head>
-<body class="bg-gray-900 text-white font-sans flex items-center justify-center min-h-screen overflow-hidden">
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { 
+    getAuth, 
+    onAuthStateChanged, 
+    GoogleAuthProvider, 
+    signInWithPopup,
+    signInWithCustomToken,
+    signOut
+} from 'firebase/auth';
+import { 
+    getFirestore, 
+    collection, 
+    query, 
+    onSnapshot, 
+    addDoc, 
+    serverTimestamp,
+    doc,
+    getDocs,
+    setDoc,
+    orderBy // Import orderBy
+} from 'firebase/firestore';
+import { ArrowRight, Users, MessageSquare, Send, X, Check, Coffee, Code, Film, Gamepad2, Music, Briefcase, Plane, LogOut } from 'lucide-react';
 
-    <div id="app-container" class="w-full max-w-4xl h-[90vh] mx-auto bg-gray-800 shadow-2xl rounded-xl flex flex-col p-4 md:p-6 relative overflow-hidden">
+// --- CONFIGURAÇÃO DO FIREBASE ---
+// Função para inicializar o Firebase de forma segura, evitando recriação.
+const initializeFirebase = () => {
+    const firebaseConfig = {
+  apiKey: "AIzaSyBNxeLZtHNvv4VIo5GW-azCdwB0PshDgb8",
+  authDomain: "bate-papo-5d433.firebaseapp.com",
+  projectId: "bate-papo-5d433",
+  storageBucket: "bate-papo-5d433.firebasestorage.app",
+  messagingSenderId: "884947581783",
+  appId: "1:884947581783:web:c0ef1f875528ef1d7e1c12",
+  measurementId: "G-02EK8053D0"
+};
 
-        <!-- Tela de Login -->
-        <div id="login-screen" class="flex flex-col items-center justify-center h-full">
-            <div class="w-full max-w-sm text-center">
-                <h1 class="text-4xl font-bold text-cyan-400 mb-2">Bem-vindo ao Chat!</h1>
-                <p class="text-gray-400 mb-8">Escolha um apelido para começar.</p>
-                <input type="text" id="nickname-input" placeholder="Digite seu apelido..." class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 mb-4" maxlength="20">
-                <button id="join-button" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-transform transform hover:scale-105">
-                    Entrar no Bate-papo
-                </button>
-                <p id="error-message" class="text-red-400 mt-4 h-auto min-h-[1rem] break-words"></p>
-            </div>
-        </div>
+const app = initializeFirebase();
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-connect-app';
 
-        <!-- Tela de Chat (continua igual) -->
-        <div id="chat-screen" class="hidden flex-1 flex flex-col h-full overflow-hidden">
-            <header class="border-b-2 border-gray-700 pb-4 mb-4 flex items-center justify-between">
-                <button id="sidebar-toggle" class="p-2 rounded-md hover:bg-gray-700">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                </button>
-                <div class="text-center">
-                    <h2 class="text-2xl font-bold text-cyan-400">Sala de Bate-papo</h2>
-                    <p class="text-sm text-gray-400">Como: <strong id="nickname-display" class="text-cyan-300"></strong></p>
-                </div>
-                <div class="w-10"></div>
-            </header>
-            <div id="chat-messages" class="flex-1 overflow-y-auto pr-2 space-y-4"></div>
-            <div class="mt-4 pt-4 border-t-2 border-gray-700">
-                <div id="private-message-indicator" class="hidden h-8 items-center justify-between bg-teal-800 text-white px-3 py-1 rounded-t-lg text-sm">
-                    <span>Enviando mensagem privada para: <strong id="private-target-nickname"></strong></span>
-                    <button id="cancel-private-button" class="font-bold text-lg">×</button>
-                </div>
-                <div class="flex items-center space-x-3">
-                    <input type="text" id="message-input" placeholder="Digite sua mensagem..." class="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                    <button id="send-button" class="bg-cyan-600 hover:bg-cyan-700 text-white font-bold p-3 rounded-full shadow-lg transition-transform transform hover:scale-110">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                    </button>
-                </div>
-            </div>
-        </div>
-        <div id="overlay" class="hidden absolute inset-0 bg-black bg-opacity-50 z-10"></div>
-        <aside id="sidebar" class="absolute top-0 left-0 h-full w-64 bg-gray-900 p-4 transform -translate-x-full z-20">
-            <h3 class="text-xl font-bold text-cyan-400 border-b border-gray-700 pb-2 mb-4">Usuários na Sala</h3>
-            <ul id="user-list" class="space-y-2 overflow-y-auto h-[calc(100%-50px)]"></ul>
-        </aside>
-    </div>
+// --- Ícones para os Lounges ---
+const loungeIcons = {
+    "Café & Papo": <Coffee className="w-6 h-6" />,
+    "Tech & Startups": <Code className="w-6 h-6" />,
+    "Cinefilos": <Film className="w-6 h-6" />,
+    "Gamers": <Gamepad2 className="w-6 h-6" />,
+    "Amantes de Música": <Music className="w-6 h-6" />,
+    "Carreira & Negócios": <Briefcase className="w-6 h-6" />,
+    "Viajantes": <Plane className="w-6 h-6" />,
+};
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, orderBy, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+// --- Componente de Tela de Carregamento ---
+const LoadingScreen = () => (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white">
+        <div className="animate-pulse flex flex-col items-center">
+            <MessageSquare className="w-16 h-16 text-indigo-400" />
+            <h1 className="text-3xl font-bold mt-4">Connect</h1>
+            <p className="text-gray-400 mt-2">Conectando você...</p>
+        </div>
+    </div>
+);
 
-        // --- CONFIGURAÇÃO DO FIREBASE ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyBNxeLZtHNvv4VIo5GW-azCdwB0PshDgb8",
-            authDomain: "bate-papo-5d433.firebaseapp.com",
-            projectId: "bate-papo-5d433",
-            storageBucket: "bate-papo-5d433.appspot.com",
-            messagingSenderId: "884947581783",
-            appId: "1:884947581783:web:c0ef1f875528ef1d7e1c12",
-            measurementId: "G-02EK8053D0"
-        };
+// --- Componente da Tela de Login ---
+const LoginScreen = () => {
+    const handleLogin = async () => {
+        const provider = new GoogleAuthProvider();
+        try {
+            await signInWithPopup(auth, provider);
+        } catch (error) {
+            console.error("Erro ao fazer login com Google:", error);
+        }
+    };
 
-        // --- ELEMENTOS DA UI ---
-        const loginScreen = document.getElementById('login-screen'),
-              chatScreen = document.getElementById('chat-screen'),
-              nicknameInput = document.getElementById('nickname-input'),
-              joinButton = document.getElementById('join-button'),
-              errorMessage = document.getElementById('error-message'),
-              nicknameDisplay = document.getElementById('nickname-display'),
-              chatMessages = document.getElementById('chat-messages'),
-              messageInput = document.getElementById('message-input'),
-              sendButton = document.getElementById('send-button'),
-              sidebar = document.getElementById('sidebar'),
-              sidebarToggle = document.getElementById('sidebar-toggle'),
-              overlay = document.getElementById('overlay'),
-              userList = document.getElementById('user-list'),
-              privateIndicator = document.getElementById('private-message-indicator'),
-              privateTargetNickname = document.getElementById('private-target-nickname'),
-              cancelPrivateButton = document.getElementById('cancel-private-button');
+    return (
+        <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4 text-white">
+            <div className="text-center">
+                <MessageSquare className="w-20 h-20 text-indigo-500 mx-auto mb-4" />
+                <h1 className="text-5xl font-extrabold mb-2">Bem-vindo ao Connect</h1>
+                <p className="text-xl text-gray-300 mb-8 max-w-2xl">
+                    Mais que um chat. Uma nova forma de se conectar com pessoas que compartilham seus interesses.
+                </p>
+                <button
+                    onClick={handleLogin}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-full text-lg transition-transform transform hover:scale-105 duration-300 ease-in-out shadow-lg"
+                >
+                    Entrar com Google para Começar
+                </button>
+            </div>
+            <footer className="absolute bottom-4 text-gray-500 text-sm">
+                <p>© {new Date().getFullYear()} Connect. Todos os direitos reservados.</p>
+            </footer>
+        </div>
+    );
+};
 
-        // --- ESTADO DA APLICAÇÃO ---
-        let userNickname = '', currentUserId = null, presenceDocId = null;
-        let privateMessageTarget = null;
-        let db, auth;
+// --- Componente do Modal de Perfil ---
+const ProfileModal = ({ user, onClose, onConnect }) => {
+    if (!user) return null;
 
-        // --- INICIALIZAÇÃO ---
-        try {
-            errorMessage.textContent = "A inicializar a ligação...";
-            const app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            console.log("DEBUG: Firebase App inicializado.");
-            errorMessage.textContent = "Ligação inicializada. A autenticar...";
-            authenticateUser();
-        } catch (error) {
-            console.error("ERRO CRÍTICO: Falha na inicialização do Firebase. Verifique o objeto firebaseConfig.", error);
-            errorMessage.textContent = "ERRO: A configuração do Firebase está incorreta.";
-        }
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-2xl shadow-xl w-full max-w-md transform transition-all duration-300 scale-95 hover:scale-100">
+                <div className="p-6 relative">
+                    <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">
+                        <X size={24} />
+                    </button>
+                    <div className="flex flex-col items-center">
+                        <img src={user.photoURL || `https://placehold.co/128x128/1F2937/E0E7FF?text=${user.displayName.charAt(0)}`} alt={user.displayName} className="w-32 h-32 rounded-full border-4 border-indigo-500 object-cover" />
+                        <h2 className="text-3xl font-bold text-white mt-4">{user.displayName}</h2>
+                        <p className="text-gray-400">{user.email}</p>
+                        
+                        <div className="mt-6 w-full text-center">
+                            <h3 className="text-lg font-semibold text-indigo-400 mb-2">Sobre</h3>
+                            <p className="text-gray-300">
+                                Entusiasta de novas tecnologias e um bom café. Buscando conexões genuínas.
+                            </p>
+                        </div>
+                        
+                        <button 
+                            onClick={() => { onConnect(user); onClose(); }}
+                            className="mt-8 w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition duration-300"
+                        >
+                            <Check size={20} /> Iniciar Conexão
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
-        // --- FUNÇÕES ---
-        async function authenticateUser() {
-            try {
-                console.log("DEBUG: A tentar autenticação anónima...");
-                await signInAnonymously(auth);
-                auth.onAuthStateChanged(user => {
-                    if (user) {
-                        currentUserId = user.uid;
-                        console.log("SUCESSO: Autenticado com UID:", currentUserId);
-                        errorMessage.textContent = "Conectado. Pode entrar.";
-                        // Funções que dependem da autenticação
-                        listenForMessages();
-                        listenForUsers();
-                    } else {
-                        console.error("ERRO: O objeto 'user' da autenticação é nulo. Verifique se a Autenticação Anónima está ativa no Firebase.");
-                        errorMessage.textContent = "ERRO: Falha na autenticação. Ative o login anónimo no Firebase.";
-                    }
-                });
-            } catch (error) {
-                console.error("ERRO: Falha em signInAnonymously().", error);
-                errorMessage.textContent = `ERRO de Auth: ${error.code}`;
-            }
-        }
+// --- Componente da Lista de Lounges ---
+const LoungeList = ({ lounges, selectedLounge, onSelectLounge }) => (
+    <div className="bg-gray-800/50 backdrop-blur-sm p-4 rounded-xl h-full flex flex-col">
+        <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Users size={24} /> Lounges</h2>
+        <ul className="space-y-2 overflow-y-auto flex-grow">
+            {lounges.map(lounge => (
+                <li key={lounge.id}>
+                    <button
+                        onClick={() => onSelectLounge(lounge)}
+                        className={`w-full text-left p-3 rounded-lg transition duration-200 flex items-center gap-3 ${selectedLounge?.id === lounge.id ? 'bg-indigo-600 text-white shadow-lg' : 'hover:bg-gray-700/50 text-gray-300'}`}
+                    >
+                        {loungeIcons[lounge.name] || <Coffee className="w-6 h-6" />}
+                        <span className="font-semibold">{lounge.name}</span>
+                    </button>
+                </li>
+            ))}
+        </ul>
+    </div>
+);
 
-        async function joinChat() {
-            console.log("DEBUG: Função joinChat() chamada.");
-            const nick = nicknameInput.value.trim();
-            if (!nick) {
-                errorMessage.textContent = "Por favor, insira um apelido.";
-                return;
-            }
-            if (!currentUserId) {
-                errorMessage.textContent = "Ainda a conectar... Por favor, aguarde um momento.";
-                console.error("ERRO: Tentativa de entrar sem currentUserId. A autenticação pode não ter sido concluída ou falhou.");
-                return;
-            }
-            
-            console.log(`DEBUG: A tentar entrar com o apelido "${nick}" e UID "${currentUserId}"`);
-            errorMessage.textContent = `A entrar como ${nick}...`;
-            userNickname = nick;
-            nicknameDisplay.textContent = userNickname;
-            
-            const appId = firebaseConfig.appId;
-            const presenceCollectionPath = `artifacts/${appId}/public/data/presence`;
-            const messagesCollectionPath = `artifacts/${appId}/public/data/messages`;
-            
-            try {
-                // Adicionar presença
-                console.log("DEBUG: A adicionar documento à coleção de presença...");
-                const docRef = await addDoc(collection(db, presenceCollectionPath), { uid: currentUserId, nickname: userNickname });
-                presenceDocId = docRef.id;
-                console.log("SUCESSO: Presença adicionada com ID:", presenceDocId);
+// --- Componente da Lista de Usuários no Chat ---
+const UserList = ({ users, onUserClick }) => (
+    <div className="bg-gray-800/50 backdrop-blur-sm p-4 rounded-xl h-full flex flex-col">
+        <h3 className="text-xl font-bold text-white mb-4">Online Agora</h3>
+        <ul className="space-y-3 overflow-y-auto flex-grow">
+            {users.map(user => (
+                <li key={user.uid}>
+                     <button onClick={() => onUserClick(user)} className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-700/50 transition duration-200">
+                        <div className="relative">
+                            <img src={user.photoURL || `https://placehold.co/40x40/1F2937/E0E7FF?text=${user.displayName.charAt(0)}`} alt={user.displayName} className="w-10 h-10 rounded-full object-cover"/>
+                            <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-400 border-2 border-gray-800"></span>
+                        </div>
+                        <span className="font-medium text-gray-200 truncate">{user.displayName}</span>
+                    </button>
+                </li>
+            ))}
+        </ul>
+    </div>
+);
 
-                // Enviar mensagem de sistema
-                console.log("DEBUG: A enviar mensagem de sistema...");
-                await addDoc(collection(db, messagesCollectionPath), {
-                    type: 'system', text: `${userNickname} entrou na sala.`,
-                    timestamp: serverTimestamp(), userId: currentUserId, nickname: userNickname
-                });
-                console.log("SUCESSO: Mensagem de sistema enviada.");
+// --- Componente da View de Chat ---
+const ChatView = ({ lounge, user, onUserClick }) => {
+    const [messages, setMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [usersInChat, setUsersInChat] = useState([]);
+    const messagesEndRef = useRef(null);
 
-                // Mudar de ecrã
-                loginScreen.classList.add('hidden');
-                chatScreen.classList.remove('hidden');
-                messageInput.focus();
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
 
-            } catch (error) {
-                console.error("ERRO CRÍTICO ao entrar no chat. Provavelmente um problema com as Regras de Segurança do Firestore.", error);
-                errorMessage.textContent = `ERRO ao entrar: ${error.message}. Verifique as Regras de Segurança do Firestore.`;
-            }
-        }
-        
-        // O resto do código permanece igual
-        async function sendMessage() {const text = messageInput.value.trim();if (text === '' || !currentUserId) return;const appId = firebaseConfig.appId;const messagesCollectionPath = `artifacts/${appId}/public/data/messages`;const messageData = {text: text,nickname: userNickname,userId: currentUserId,timestamp: serverTimestamp(),};if (privateMessageTarget) {messageData.type = 'private';messageData.toUserId = privateMessageTarget.uid;messageData.toNickname = privateMessageTarget.nickname;} else {messageData.type = 'public';}try {await addDoc(collection(db, messagesCollectionPath), messageData);messageInput.value = '';} catch (error) {console.error("Erro ao enviar mensagem:", error);}}
-        function listenForMessages() {const appId = firebaseConfig.appId;const messagesCollectionPath = `artifacts/${appId}/public/data/messages`;const q = query(collection(db, messagesCollectionPath), orderBy("timestamp", "asc"));onSnapshot(q, (snapshot) => {snapshot.docChanges().forEach((change) => {if (change.type === "added") {displayMessage(change.doc.data());}});if (chatMessages.children.length > 0) {chatMessages.scrollTop = chatMessages.scrollHeight;}}, (error) => console.error("Erro ao receber mensagens:", error));}
-        function displayMessage(msg) {let messageElement;switch (msg.type) {case 'system':messageElement = createSystemMessageElement(msg);break;case 'private':if (msg.userId === currentUserId || msg.toUserId === currentUserId) {messageElement = createPrivateMessageElement(msg);}break;default:messageElement = createPublicMessageElement(msg);break;}if (messageElement) {chatMessages.appendChild(messageElement);}}
-        function createPublicMessageElement(msg) {const isMyMessage = msg.userId === currentUserId;const wrapper = document.createElement('div');wrapper.className = `flex ${isMyMessage ? 'justify-end' : 'justify-start'}`;const bubble = document.createElement('div');bubble.className = `max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-xl shadow-md ${isMyMessage ? 'bg-cyan-700 rounded-br-none' : 'bg-gray-600 rounded-bl-none'}`;bubble.innerHTML = `<p class="font-bold text-sm ${isMyMessage ? 'text-cyan-200' : 'text-gray-300'}">${msg.nickname}</p><p class="text-white break-words">${msg.text}</p><p class="text-xs text-gray-400 text-right mt-1">${msg.timestamp ? dayjs(msg.timestamp.toDate()).format('HH:mm') : ''}</p>`;wrapper.appendChild(bubble);return wrapper;}
-        function createSystemMessageElement(msg) {const wrapper = document.createElement('div');wrapper.className = 'text-center my-2';const text = document.createElement('p');text.className = 'text-sm text-gray-500 italic';const messageText = msg.text.replace(msg.nickname, `<span class="private-chat-trigger" data-uid="${msg.userId}" data-nickname="${msg.nickname}">${msg.nickname}</span>`);text.innerHTML = messageText;wrapper.appendChild(text);return wrapper;}
-        function createPrivateMessageElement(msg) {const isMyMessage = msg.userId === currentUserId;const wrapper = document.createElement('div');wrapper.className = `flex ${isMyMessage ? 'justify-end' : 'justify-start'}`;const bubble = document.createElement('div');bubble.className = `max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-xl shadow-md border ${isMyMessage ? 'bg-teal-800 border-teal-600 rounded-br-none' : 'bg-gray-700 border-gray-500 rounded-bl-none'}`;let headerText = isMyMessage ? `(Privado para ${msg.toNickname})` : `(Privado de ${msg.nickname})`;bubble.innerHTML = `<p class="font-bold text-sm text-teal-300">${headerText}</p><p class="text-white break-words mt-1">${msg.text}</p><p class="text-xs text-gray-400 text-right mt-1">${msg.timestamp ? dayjs(msg.timestamp.toDate()).format('HH:mm') : ''}</p>`;wrapper.appendChild(bubble);return wrapper;}
-        function listenForUsers() {const appId = firebaseConfig.appId;const presenceCollectionPath = `artifacts/${appId}/public/data/presence`;const q = query(collection(db, presenceCollectionPath));onSnapshot(q, (snapshot) => {userList.innerHTML = '';snapshot.forEach((doc) => {const user = doc.data();const userItem = document.createElement('li');userItem.className = 'flex items-center space-x-2 text-gray-300';userItem.innerHTML = `<span class="w-2 h-2 bg-green-400 rounded-full"></span><span>${user.nickname}</span>`;userList.appendChild(userItem);});});}
-        function setPrivateMessageTarget(target) {if (target.uid === currentUserId) {cancelPrivateMessageMode();return;}privateMessageTarget = target;privateTargetNickname.textContent = target.nickname;privateIndicator.classList.remove('hidden');privateIndicator.classList.add('flex');messageInput.focus();}
-        function cancelPrivateMessageMode() {privateMessageTarget = null;privateIndicator.classList.add('hidden');privateIndicator.classList.remove('flex');}
-        async function handleUserExit() {if (presenceDocId) {const appId = firebaseConfig.appId;const presenceCollectionPath = `artifacts/${appId}/public/data/presence`;await deleteDoc(doc(db, presenceCollectionPath, presenceDocId));}}
-        function toggleSidebar() {sidebar.classList.toggle('-translate-x-full');overlay.classList.toggle('hidden');}
+    useEffect(scrollToBottom, [messages]);
 
-        // --- EVENT LISTENERS ---
-        joinButton.addEventListener('click', joinChat);
-        nicknameInput.addEventListener('keypress', (e) => e.key === 'Enter' && joinChat());
-        sendButton.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', (e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage()));
-        sidebarToggle.addEventListener('click', toggleSidebar);
-        overlay.addEventListener('click', toggleSidebar);
-        cancelPrivateButton.addEventListener('click', cancelPrivateMessageMode);
-        chatMessages.addEventListener('click', (e) => {if (e.target.classList.contains('private-chat-trigger')) {const { uid, nickname } = e.target.dataset;setPrivateMessageTarget({ uid, nickname });}});
+    useEffect(() => {
+        if (!lounge) return;
+
+        const messagesPath = `artifacts/${appId}/public/data/lounges/${lounge.id}/messages`;
+        const q = query(collection(db, messagesPath), orderBy('timestamp'));
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const msgs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setMessages(msgs);
+
+            const uniqueUsers = msgs.reduce((acc, msg) => {
+                if (msg.uid && !acc.find(u => u.uid === msg.uid)) {
+                    acc.push({ 
+                        uid: msg.uid, 
+                        displayName: msg.displayName, 
+                        photoURL: msg.photoURL,
+                        email: msg.email
+                    });
+                }
+                return acc;
+            }, []);
+            
+            if (user && !uniqueUsers.find(u => u.uid === user.uid)) {
+                uniqueUsers.push({
+                    uid: user.uid,
+                    displayName: user.displayName,
+                    photoURL: user.photoURL,
+                    email: user.email
+                });
+            }
+
+            setUsersInChat(uniqueUsers);
+        }, (error) => {
+            console.error("Error fetching messages: ", error);
+        });
+
+        return () => unsubscribe();
+    }, [lounge, user]);
+
+    const handleSendMessage = async (e) => {
+        e.preventDefault();
+        if (newMessage.trim() === '' || !lounge || !user) return;
+
+        const messagesPath = `artifacts/${appId}/public/data/lounges/${lounge.id}/messages`;
+        
+        try {
+            await addDoc(collection(db, messagesPath), {
+                text: newMessage,
+                timestamp: serverTimestamp(),
+                uid: user.uid,
+                displayName: user.displayName,
+                photoURL: user.photoURL,
+                email: user.email
+            });
+            setNewMessage('');
+        } catch (error) {
+            console.error("Error sending message: ", error);
+        }
+    };
+
+    if (!lounge) {
+        return (
+            <div className="flex-grow flex flex-col items-center justify-center bg-gray-800/30 rounded-xl text-gray-400 h-full">
+                <MessageSquare size={64} className="mb-4" />
+                <h2 className="text-2xl font-bold text-white">Selecione um Lounge</h2>
+                <p>Escolha um tópico para começar a conversar.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex-grow flex flex-col bg-gray-800/30 rounded-xl h-full">
+            <div className="p-4 border-b border-gray-700/50">
+                <h2 className="text-2xl font-bold text-white">{lounge.name}</h2>
+                <p className="text-sm text-gray-400">{lounge.description}</p>
+            </div>
+            
+            <div className="flex-grow flex overflow-hidden">
+                <div className="flex-grow p-4 overflow-y-auto flex flex-col space-y-4">
+                    {messages.map(msg => (
+                        <div key={msg.id} className={`flex items-end gap-3 ${msg.uid === user.uid ? 'self-end flex-row-reverse' : 'self-start'}`}>
+                            <img 
+                                src={msg.photoURL || `https://placehold.co/40x40/7C3AED/FFFFFF?text=${msg.displayName.charAt(0)}`} 
+                                alt={msg.displayName} 
+                                className="w-8 h-8 rounded-full cursor-pointer object-cover"
+                                onClick={() => onUserClick(msg)}
+                            />
+                            <div className={`max-w-xs md:max-w-md lg:max-w-lg rounded-xl px-4 py-2 ${msg.uid === user.uid ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-gray-700 text-gray-200 rounded-bl-none'}`}>
+                                {msg.uid !== user.uid && (
+                                     <p className="text-xs font-bold text-indigo-400 mb-1 cursor-pointer" onClick={() => onUserClick(msg)}>{msg.displayName}</p>
+                                )}
+                                <p className="text-base break-words">{msg.text}</p>
+                            </div>
+                        </div>
+                    ))}
+                    <div ref={messagesEndRef} />
+                </div>
+                <div className="hidden lg:block w-64 border-l border-gray-700/50 p-2">
+                    <UserList users={usersInChat} onUserClick={onUserClick} />
+                </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-700/50">
+                <form onSubmit={handleSendMessage} className="flex items-center gap-3">
+                    <input
+                        type="text"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        placeholder="Digite sua mensagem..."
+                        className="flex-grow bg-gray-700 rounded-full py-3 px-5 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button type="submit" className="bg-indigo-600 text-white rounded-full p-3 hover:bg-indigo-700 transition duration-200 disabled:bg-gray-500">
+                        <Send size={20} />
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+// --- Componente Principal da Aplicação ---
+const MainApp = ({ user }) => {
+    const [lounges, setLounges] = useState([]);
+    const [selectedLounge, setSelectedLounge] = useState(null);
+    const [profileUser, setProfileUser] = useState(null);
+    const [notification, setNotification] = useState(null);
+
+    const setupInitialLounges = async () => {
+        const loungesPath = `artifacts/${appId}/public/data/lounges`;
+        const loungesRef = collection(db, loungesPath);
+        try {
+            const snapshot = await getDocs(loungesRef);
+            if (snapshot.empty) {
+                console.log("Criando lounges iniciais...");
+                const initialLounges = [
+                    { name: "Café & Papo", description: "Conversas leves para o dia a dia." },
+                    { name: "Tech & Startups", description: "Para apaixonados por inovação e código." },
+                    { name: "Cinefilos", description: "Discuta os últimos lançamentos e clássicos." },
+                    { name: "Gamers", description: "Encontre seu squad para a próxima partida." },
+                    { name: "Amantes de Música", description: "Compartilhe suas playlists e descobertas." },
+                    { name: "Carreira & Negócios", description: "Networking e dicas profissionais." },
+                    { name: "Viajantes", description: "Dicas e histórias de quem ama a estrada." },
+                ];
+                for (const lounge of initialLounges) {
+                    await addDoc(loungesRef, lounge);
+                }
+            }
+        } catch (error) {
+            console.error("Erro ao configurar lounges: ", error);
+        }
+    };
+
+    useEffect(() => {
+        setupInitialLounges();
+        
+        const loungesPath = `artifacts/${appId}/public/data/lounges`;
+        const q = query(collection(db, loungesPath));
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const loungesData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setLounges(loungesData);
+            if (!selectedLounge && loungesData.length > 0) {
+                setSelectedLounge(loungesData[0]);
+            }
+        }, (error) => {
+            console.error("Erro ao carregar lounges: ", error);
+        });
+
+        return () => unsubscribe();
+    }, [selectedLounge]); // Adicionado selectedLounge para garantir que não mude desnecessariamente
+
+    const handleUserClick = (userForProfile) => {
+        if (userForProfile.uid === user.uid) return;
+        setProfileUser(userForProfile);
+    };
+
+    const handleConnect = (targetUser) => {
+        setNotification(`Pedido de conexão enviado para ${targetUser.displayName}!`);
+        setTimeout(() => setNotification(null), 3000);
+    };
+
+    const handleLogout = () => {
+        signOut(auth).catch(error => console.error("Erro no logout:", error));
+    };
+
+    return (
+        <div className="h-screen w-screen bg-gray-900 text-white flex flex-col p-4 gap-4 bg-grid-gray-700/[0.2]">
+            <header className="flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                    <MessageSquare className="w-8 h-8 text-indigo-400" />
+                    <h1 className="text-2xl font-bold">Connect</h1>
+                </div>
+                <div className="flex items-center gap-4">
+                    <span className="text-gray-300 hidden sm:block">Olá, {user.displayName}</span>
+                    <img src={user.photoURL || `https://placehold.co/40x40/1F2937/E0E7FF?text=${user.displayName.charAt(0)}`} alt="Seu perfil" className="w-10 h-10 rounded-full object-cover border-2 border-indigo-500"/>
+                    <button onClick={handleLogout} className="text-gray-400 hover:text-white" title="Sair">
+                        <LogOut size={20} />
+                    </button>
+                </div>
+            </header>
+
+            <main className="flex-grow flex gap-4 overflow-hidden">
+                <div className="w-1/4 min-w-[250px] hidden md:block">
+                    <LoungeList lounges={lounges} selectedLounge={selectedLounge} onSelectLounge={setSelectedLounge} />
+                </div>
+                <div className="flex-grow">
+                     <ChatView lounge={selectedLounge} user={user} onUserClick={handleUserClick} />
+                </div>
+            </main>
+
+            {profileUser && <ProfileModal user={profileUser} onClose={() => setProfileUser(null)} onConnect={handleConnect} />}
+
+            {notification && (
+                <div className="absolute top-20 right-4 bg-green-500 text-white py-2 px-4 rounded-lg shadow-lg animate-bounce">
+                    {notification}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// --- Componente Raiz ---
+export default function App() {
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        // Tenta autenticar com o token customizado se ele existir
+        const tryCustomTokenAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                try {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } catch (error) {
+                    console.error("Falha no login com token customizado:", error);
+                }
+            }
+        };
+        
+        tryCustomTokenAuth();
+
+        // O listener onAuthStateChanged é a fonte da verdade para o estado de autenticação.
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+            setUser(currentUser);
+            setLoading(false);
+        });
+
+        // Limpa o listener quando o componente desmonta
+        return () => unsubscribe();
+    }, []);
+
+    if (loading) {
+        return <LoadingScreen />;
+    }
+
+    return user ? <MainApp user={user} /> : <LoginScreen />;
+}
+
 
